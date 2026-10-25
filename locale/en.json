@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Attention Notifier",
+    "description": "Shows a clickable always-on-top card for questions, approvals, completed turns and errors. Clicking anywhere on the card focuses Harness and selects the notified conversation."
+  }
+}

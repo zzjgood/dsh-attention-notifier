@@ -1,0 +1,31 @@
+{
+  "name": "@local/attention-notifier",
+  "version": "2.3.1",
+  "private": true,
+  "description": "Clickable always-on-top attention cards for DeepSeek Harness: questions, approvals, completed turns and errors, with a click that focuses the window and selects the notified session.",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "popup.ps1",
+    "whale.png",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
