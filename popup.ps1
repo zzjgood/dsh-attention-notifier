@@ -24,6 +24,7 @@ public class AttnCard : Form
     public Color Accent = Color.FromArgb(76, 141, 255);
     public string Glyph = "?";
     public int TimeoutSeconds = 60;
+    public string FontFamily = "Microsoft YaHei UI";
 
     private const int ShadowMargin = 14;
     private const int CardWidth = 252;
@@ -256,7 +257,7 @@ public class AttnCard : Form
 
         int textLeft = card.X + 66;
         int textWidth = card.Width - 66 - 44;
-        using (Font titleFont = new Font("Microsoft YaHei UI", 10.5f, FontStyle.Bold, GraphicsUnit.Point))
+        using (Font titleFont = new Font(FontFamily, 10.5f, FontStyle.Bold, GraphicsUnit.Point))
         using (SolidBrush titleBrush = new SolidBrush(Color.FromArgb(241, 243, 246)))
         using (StringFormat titleFormat = new StringFormat())
         {
@@ -265,7 +266,7 @@ public class AttnCard : Form
             g.DrawString(TitleText, titleFont, titleBrush, new RectangleF(textLeft, card.Y + 22, textWidth, 24), titleFormat);
         }
 
-        using (Font bodyFont = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular, GraphicsUnit.Point))
+        using (Font bodyFont = new Font(FontFamily, 9f, FontStyle.Regular, GraphicsUnit.Point))
         using (SolidBrush bodyBrush = new SolidBrush(Color.FromArgb(176, 181, 190)))
         using (StringFormat bodyFormat = new StringFormat())
         {
@@ -280,7 +281,7 @@ public class AttnCard : Form
         {
             g.FillPath(buttonBrush, buttonPath);
         }
-        using (Font buttonFont = new Font("Microsoft YaHei UI", 9f, FontStyle.Bold, GraphicsUnit.Point))
+        using (Font buttonFont = new Font(FontFamily, 9f, FontStyle.Bold, GraphicsUnit.Point))
         using (StringFormat centered = new StringFormat())
         using (SolidBrush buttonText = new SolidBrush(Color.FromArgb(255, 255, 255)))
         {
@@ -289,7 +290,7 @@ public class AttnCard : Form
             g.DrawString(HintText, buttonFont, buttonText, buttonRect, centered);
         }
 
-        using (Font tipFont = new Font("Microsoft YaHei UI", 8f, FontStyle.Regular, GraphicsUnit.Point))
+        using (Font tipFont = new Font(FontFamily, 8f, FontStyle.Regular, GraphicsUnit.Point))
         using (SolidBrush tipBrush = new SolidBrush(Color.FromArgb(126, 132, 141)))
         using (StringFormat tipFormat = new StringFormat())
         {
@@ -489,17 +490,32 @@ public class AttnCard : Form
 '@
 Add-Type -TypeDefinition $cardSource -ReferencedAssemblies 'System.Windows.Forms', 'System.Drawing'
 
-$kind = [string]$env:DSH_ATTN_SOUND
+# The Host sends every card string in both languages. The language reported by
+# the Client wins; until the page has polled once, or with no page at all, the
+# Windows UI language decides.
+$reported = ([string]$env:DSH_ATTN_LANG).Trim().ToLowerInvariant()
+$lang = ''
+if ($reported -like 'zh*') { $lang = 'zh' }
+elseif ($reported -like 'en*') { $lang = 'en' }
+if (-not $lang) {
+  $lang = 'en'
+  try {
+    if ([System.Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'zh') { $lang = 'zh' }
+  } catch {}
+}
+function Get-AttnText([string]$name) {
+  if ($lang -eq 'zh') { $suffix = '_ZH' } else { $suffix = '_EN' }
+  $value = [string][Environment]::GetEnvironmentVariable('DSH_ATTN_' + $name + $suffix)
+  if (-not $value) { $value = [string][Environment]::GetEnvironmentVariable('DSH_ATTN_' + $name) }
+  return $value
+}
+
+$kind = [string]$env:DSH_ATTN_KIND
 if ($kind -ne 'question' -and $kind -ne 'approval' -and $kind -ne 'error') { $kind = 'done' }
-$title = [string]$env:DSH_ATTN_TITLE
-$body = [string]$env:DSH_ATTN_BODY
-$hint = [string]$env:DSH_ATTN_HINT
-# 点击卡片任意位置打开 · 右键关闭
-# (built from code points so this script stays ASCII-only for Windows PowerShell 5.1)
-$tip = -join (
-  [char]0x70B9, [char]0x51FB, [char]0x5361, [char]0x7247, [char]0x4EFB, [char]0x610F,
-  [char]0x4F4D, [char]0x7F6E, [char]0x6253, [char]0x5F00, [char]0x20, [char]0x00B7,
-  [char]0x20, [char]0x53F3, [char]0x952E, [char]0x5173, [char]0x95ED)
+$title = Get-AttnText 'TITLE'
+$body = Get-AttnText 'BODY'
+$hint = Get-AttnText 'HINT'
+$tip = Get-AttnText 'TIP'
 $focus = [string]$env:DSH_ATTN_FOCUS
 $vbs = [string]$env:DSH_ATTN_VBS
 $image = [string]$env:DSH_ATTN_IMAGE
@@ -512,6 +528,10 @@ $timeout = 60
 if ($timeout -le 0) { $timeout = 60 }
 if (-not $title) { $title = 'Attention' }
 if (-not $hint) { $hint = 'Open Harness' }
+if (-not $tip) { $tip = 'Click card to open - Right-click to close' }
+
+$cardFont = 'Microsoft YaHei UI'
+if ($lang -ne 'zh') { $cardFont = 'Segoe UI' }
 
 $accentByKind = @{
   question = [System.Drawing.Color]::FromArgb(76, 141, 255)
@@ -526,9 +546,20 @@ $glyphByKind = @{
   error = ([string][char]0x00D7)
 }
 
-# Only the newest attention card stays on screen.
-try { [AttnCard]::CloseExistingCards() } catch {}
-Start-Sleep -Milliseconds 80
+# Only the newest attention card stays on screen. A named mutex serializes the
+# close-then-create window, so two notifications arriving together cannot leave
+# two cards; the mutex is released once the new card has been shown.
+$mutex = New-Object System.Threading.Mutex($false, 'Local\DeepSeekHarnessAttentionCard')
+$ownsMutex = $false
+try {
+  $ownsMutex = $mutex.WaitOne(3000)
+} catch [System.Threading.AbandonedMutexException] {
+  $ownsMutex = $true
+} catch {}
+if ($ownsMutex) {
+  try { [AttnCard]::CloseExistingCards() } catch {}
+  Start-Sleep -Milliseconds 80
+}
 
 $card = New-Object AttnCard
 $card.TitleText = $title
@@ -541,6 +572,7 @@ $card.ImagePath = $image
 $card.Accent = $accentByKind[$kind]
 $card.Glyph = $glyphByKind[$kind]
 $card.TimeoutSeconds = $timeout
+$card.FontFamily = $cardFont
 
 $shadowMargin = 14
 $cardWidth = 252
@@ -559,4 +591,7 @@ try {
   }
 } catch {}
 
+if ($ownsMutex) {
+  $card.add_Shown({ try { $mutex.ReleaseMutex() } catch {} })
+}
 [System.Windows.Forms.Application]::Run($card)

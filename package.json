@@ -1,6 +1,6 @@
 {
   "name": "@local/attention-notifier",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "private": true,
   "description": "Clickable always-on-top attention cards for DeepSeek Harness: questions, approvals, completed turns and errors, with a click that focuses the window and selects the notified session.",
   "type": "module",
